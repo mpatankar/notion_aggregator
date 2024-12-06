@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notion Aggregator</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/inter/3.19.3/inter.css" rel="stylesheet">
+    <style>
+        /* Notion-like styling */
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 16px;
+            background-color: transparent;
+            color: rgb(55, 53, 47);
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+
+        /* Updated Notion-like button with logo styling */
+        .notion-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 32px;
+            padding: 0 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 700;
+            background: white;
+            color: rgb(55, 53, 47);
+            border: 2.5px solid rgb(55, 53, 47);
+            cursor: pointer;
+            transition: all 20ms ease-in;
+            user-select: none;
+        }
+
+        .notion-button:hover {
+            background: rgba(55, 53, 47, 0.08);
+        }
+
+        .notion-button:disabled {
+            background: white;
+            border-color: rgba(55, 53, 47, 0.2);
+            color: rgba(55, 53, 47, 0.2);
+            cursor: not-allowed;
+        }
+
+        /* Progress section */
+        .progress-section {
+            margin-top: 12px;
+            font-size: 14px;
+            color: rgb(55, 53, 47);
+        }
+
+        .progress-item {
+            margin: 8px 0;
+            padding: 8px;
+            background: rgba(235, 236, 237, 0.3);
+            border-radius: 3px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-right: 8px;
+        }
+
+        .status-badge.running {
+            background: rgb(251, 241, 199);
+            color: rgb(152, 104, 0);
+        }
+
+        .status-badge.completed {
+            background: rgb(219, 237, 219);
+            color: rgb(0, 120, 0);
+        }
+
+        .status-badge.error {
+            background: rgb(255, 226, 221);
+            color: rgb(220, 38, 38);
+        }
+
+        .error-message {
+            color: rgb(220, 38, 38);
+            margin-top: 8px;
+            font-size: 14px;
+        }
+
+        /* Updated spinner for dark color scheme */
+        .spinner {
+            border: 2px solid rgba(55, 53, 47, 0.2);
+            border-radius: 50%;
+            border-top: 2px solid rgb(55, 53, 47);
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+            display: none;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .button-content {
+            display: flex;
+            align-items: center;
+        }
+
+        .last-run {
+            font-size: 12px;
+            color: rgba(55, 53, 47, 0.65);
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button id="aggregateButton" class="notion-button">
+            <div class="button-content">
+                <div id="spinner" class="spinner"></div>
+                <span id="buttonText">Aggregate your Notion Tasks</span>
+            </div>
+        </button>
+        
+        <div id="progressSection" class="progress-section" style="display: none;">
+            <div class="progress-item">
+                <span id="statusBadge" class="status-badge">Idle</span>
+                <span id="progressText">Ready to start</span>
+            </div>
+            <div id="errorMessage" class="error-message" style="display: none;"></div>
+            <div id="lastRun" class="last-run"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:3000/api'; // Change this to your deployed server URL
+        const button = document.getElementById('aggregateButton');
+        const spinner = document.getElementById('spinner');
+        const buttonText = document.getElementById('buttonText');
+        const progressSection = document.getElementById('progressSection');
+        const statusBadge = document.getElementById('statusBadge');
+        const progressText = document.getElementById('progressText');
+        const errorMessage = document.getElementById('errorMessage');
+        const lastRun = document.getElementById('lastRun');
+
+        function updateProgress(progress) {
+            progressSection.style.display = 'block';
+            
+            // Update status badge
+            statusBadge.className = 'status-badge';
+            if (progress.status === 'processing' || progress.status === 'starting' || progress.status === 'writing') {
+                statusBadge.classList.add('running');
+                statusBadge.textContent = 'Running';
+            } else if (progress.status === 'completed') {
+                statusBadge.classList.add('completed');
+                statusBadge.textContent = 'Completed';
+            } else if (progress.status === 'error') {
+                statusBadge.classList.add('error');
+                statusBadge.textContent = 'Error';
+            }
+
+            // Update progress text
+            if (progress.status === 'processing') {
+                progressText.textContent = `Processing page ${progress.pagesProcessed} of ${progress.totalPages}: ${progress.currentPage}`;
+            } else if (progress.status === 'writing') {
+                progressText.textContent = 'Writing results to summary page...';
+            } else if (progress.status === 'completed') {
+                progressText.textContent = `Processed ${progress.totalPages} pages successfully`;
+            } else if (progress.status === 'error') {
+                progressText.textContent = 'An error occurred';
+                errorMessage.style.display = 'block';
+                errorMessage.textContent = progress.error;
+            }
+
+            // Update last run time
+            if (progress.lastRun) {
+                lastRun.textContent = `Last run: ${new Date(progress.lastRun).toLocaleString()}`;
+            }
+        }
+
+        async function checkStatus() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/status`);
+                const data = await response.json();
+                
+                button.disabled = data.isRunning;
+                spinner.style.display = data.isRunning ? 'block' : 'none';
+                
+                if (data.progress) {
+                    updateProgress(data.progress);
+                }
+
+                if (data.isRunning) {
+                    setTimeout(checkStatus, 1000);
+                }
+            } catch (error) {
+                console.error('Error checking status:', error);
+            }
+        }
+
+        button.addEventListener('click', async () => {
+            try {
+                button.disabled = true;
+                spinner.style.display = 'block';
+                errorMessage.style.display = 'none';
+                
+                const response = await fetch(`${API_BASE_URL}/aggregate`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (!data.success) {
+                    throw new Error(data.message);
+                }
+
+                // Start polling for status updates
+                checkStatus();
+                
+            } catch (error) {
+                console.error('Error:', error);
+                button.disabled = false;
+                spinner.style.display = 'none';
+                errorMessage.style.display = 'block';
+                errorMessage.textContent = error.message;
+            }
+        });
+
+        // Check initial status when page loads
+        checkStatus();
+    </script>
+</body>
+</html>
